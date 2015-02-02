@@ -220,8 +220,9 @@ foreach my $m (@$merged){
         my @info = split(/\|/, $split[-1]);
         my $s = parse_sample_names($info[0]); 
         $samples_to_inf{$s} = join("|", @info[1..$#info], $info[0]);
-        my $log2 = abs($info[6]); 
-        $max_log2 = $log2 > $max_log2 ? $log2 : $max_log2;
+        if (abs($info[6]) > abs($max_log2)){
+            $max_log2 = $info[6];
+        }
     }
     print $OUT join("\t", $m->{chrom}, $m->{start}, $m->{end}, $max_log2);
     foreach my $in (@input){ 
@@ -296,7 +297,7 @@ sub write_plot_script{
 ################################################################################
 
 sub make_header{
-    my @head = qw / chrom start end /;
+    my @head = qw / chrom start end max\/min_log2/;
     foreach my $in (@input){
         my $samples = parse_sample_names($in);
         push @head, $samples;
