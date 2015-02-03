@@ -7,13 +7,39 @@ use warnings;
 use threads;
 use File::Basename;
 use File::Copy;
+use Getopt::Long;
+use Cwd;
+my @input = ();
+my %opts = (input => \@input);
+GetOptions(
+    \%opts,
+    "input=s{,}",    #bam files
+    "outdir=s",      
+    "pvalue=f",       
+    "log2=f",     
+    "help",
+)or usage("Syntax error");
+usage("At least two bams must be provided to the --input option") if @input < 2;
+usage() if $opts{help};
 
 sub usage{
+    
+    my ($message) = @_;
+    print "\n$message\n" if $message;
+
     print <<"EOT"
  
     Usage:
     
-    $0 [sample1.bam sample2.bam etc.]
+    $0 -i <sample1.bam sample2.bam etc.> [options]
+    
+    Options:
+    
+    -i, --input  <one or more bam files to analyse>
+    -o, --outdir <directory for output files. Defaults to current working directory.>
+    -p, --pvalue <p-value to use as a cut-off for cnv-seq.pl. Default is 0.001.>
+    -l, --log2   <log2 cut-off for cnv-seq.pl. Default is 0.6.> 
+    -h, --help   <this help message>
 
     This program takes several bam files (at least 2 required) and performs all possible
     pairwise comparisons using cnv-seq.pl (http://tiger.dbs.nus.edu.sg/cnv-seq/). 
@@ -51,21 +77,39 @@ sub usage{
 
 EOT
 ;
-
+    exit 1 if $message;
+    exit 0 ;
+}
+my $original_dir = getcwd();
+my $outdir = getcwd();
+if ($opts{outdir}){
+    $outdir = $opts{outdir};
+    if (not -d $outdir){
+        print STDERR "Making output directory: $outdir\n";
+        mkdir $outdir or die "Could not make output directory $outdir: $!\n";
+    }
 }
 
-usage() if @ARGV < 2;
+my $pvalue = 0.001;
+if ($opts{pvalue}){
+    $pvalue = $opts{pvalue};
+}
+
+my $log2 = 0.6;
+if ($opts{log2}){
+    $log2 = $opts{log2};
+}
 
 my @samples = ();
 my @convert_commands = ();
 my @exts = ( qw ( .sam .bam .cram .SAM .BAM .CRAM) ) ;
-while (my $in = shift){
+foreach my $in (@input){
     my ($file, $dir, $ext) = fileparse($in, @exts); 
     my $sample = (split "_", $file)[0];
     push @samples, $sample; 
     print STDERR "Creating directory for $sample...\n"; 
-    mkdir $sample or die "Could not make directory $sample: $!\n";
-    push @convert_commands, "samtools view -F 4 $in | perl -lane 'print \"\$F[2]\\t\$F[3]\"' > $sample/$sample.hits";
+    mkdir "$outdir/$sample" or die "Could not make directory $outdir/$sample: $!\n";
+    push @convert_commands, "samtools view -F 4 $in | perl -lane 'print \"\$F[2]\\t\$F[3]\"' > $outdir/$sample/$sample.hits";
 }
 
 for (my $i = 0; $i < @convert_commands; $i++){
@@ -87,21 +131,21 @@ my $n = 0;
 foreach my $s (@samples){
     $n++;
     print STDERR "Processing $s (sample $n of " . scalar(@samples) . ")...\n"; 
-    chdir($s) or die "Could not change directory to $s: $!\n";
+    chdir("$outdir/$s") or die "Could not change directory to $outdir/$s: $!\n";
     my @others = grep {$s ne $_} @samples;
     die "Need at least two unique samples\n" if not @others;
     my $m = 0; 
     foreach my $o (@others){
         $m++;
         print STDERR "Running cnv-seq.pl for $s vs $o ($m of " . scalar(@others) . ")...\n";
-        my $outdir = $s."_vs_". $o;
-        mkdir $outdir or die "Could not make directory $outdir: $!\n";
-        mkdir "$outdir/plots" or die "Could not make directory $outdir/plots: $!\n";
+        my $sample_outdir = $s."_vs_". $o;
+        mkdir $sample_outdir or die "Could not make directory $sample_outdir: $!\n";
+        mkdir "$sample_outdir/plots" or die "Could not make directory $sample_outdir/plots: $!\n";
         #chdir($outdir) or die "Could not change directory to $outdir: $!\n";
     }
     foreach my $o (@others){
-        my $outdir = $s."_vs_". $o;
-        my $thr = threads->create(\&doCnvSeq, $s, $o, $outdir);
+        my $sample_outdir = $s."_vs_". $o;
+        my $thr = threads->create(\&doCnvSeq, $s, $o, $sample_outdir);
     }
     while (threads->list(threads::all)){
         foreach my $joinable (threads->list(threads::joinable)){
@@ -109,7 +153,7 @@ foreach my $s (@samples){
         }
         sleep 2; 
     }
-    chdir("../") or die "Could not move directory: $!"; 
+    chdir($original_dir) or die "Could not move directory: $!"; 
 }
 print STDERR "Finished processing $n samples.\n";
 
@@ -139,8 +183,8 @@ sub doCnvSeq{
 sub make_plot_chroms_script{
     my ($test, $ref, $outdir) = @_;
     my %chrom = ();
-    open (my $IN, "$outdir/$test.hits-vs-$ref.hits.log2-0.6.pvalue-0.001.minw-4.cnv.out") 
-        or die "Could not open $test.hits-vs-$ref.hits.log2-0.6.pvalue-0.001.minw-4.cnv.out: $!";
+    open (my $IN, "$outdir/$test.hits-vs-$ref.hits.log2-$log2.pvalue-$pvalue.minw-4.cnv.out") 
+        or die "Could not open $test.hits-vs-$ref.hits.log2-$log2.pvalue-$pvalue.minw-4.cnv.out: $!";
     while (<$IN>){
         next if /^cnv/;
         my $chr = (split "\t")[1];
@@ -150,7 +194,7 @@ sub make_plot_chroms_script{
     my $script = "plotChroms-$test-vs-$ref.R"; 
     open (my $PLOT, ">$script" ) or die "Can't create rscript.R: $!\n";
     print $PLOT "library(cnv)\n";
-    print $PLOT "data <- read.delim(\"$test.hits-vs-$ref.hits.log2-0.6.pvalue-0.001.minw-4.cnv\")\n";
+    print $PLOT "data <- read.delim(\"$test.hits-vs-$ref.hits.log2-$log2.pvalue-$pvalue.minw-4.cnv\")\n";
     foreach my $c (keys %chrom){
         print $PLOT "plot.cnv.chr(data, chromosome=\"$c\", ylim = c(-6, 6))\n";
         print $PLOT "ggsave(\"$outdir/plots/chr$c.pdf\")\n";
@@ -168,8 +212,8 @@ sub make_r_script{
     print $R <<"EOT"
     
     library(cnv)
-    data <- read.delim("$test.hits-vs-$ref.hits.log2-0.6.pvalue-0.001.minw-4.cnv")
-    cnv.print(data, file="$outdir/$test.hits-vs-$ref.hits.log2-0.6.pvalue-0.001.minw-4.cnv.out")
+    data <- read.delim("$test.hits-vs-$ref.hits.log2-$log2.pvalue-$pvalue.minw-4.cnv")
+    cnv.print(data, file="$outdir/$test.hits-vs-$ref.hits.log2-$log2.pvalue-$pvalue.minw-4.cnv.out")
     cnv.summary(data)
     plot.cnv.all(data)
     ggsave("$outdir/plots/all_cnvs.pdf")
