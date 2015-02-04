@@ -80,6 +80,7 @@ EOT
     exit 1 if $message;
     exit 0 ;
 }
+my ($script, $script_dir) = fileparse($0); 
 my $original_dir = getcwd();
 my $outdir = getcwd();
 if ($opts{outdir}){
@@ -108,8 +109,15 @@ foreach my $in (@input){
     my $sample = (split "_", $file)[0];
     push @samples, $sample; 
     print STDERR "Creating directory for $sample...\n"; 
-    mkdir "$outdir/$sample" or die "Could not make directory $outdir/$sample: $!\n";
-    push @convert_commands, "samtools view -F 4 $in | perl -lane 'print \"\$F[2]\\t\$F[3]\"' > $outdir/$sample/$sample.hits";
+    if (not -d "$outdir/$sample"){
+        mkdir "$outdir/$sample" or die "Could not make directory $outdir/$sample: $!\n";
+    }
+    if (not -e "$outdir/$sample/$sample.hits"){ 
+        push @convert_commands, "samtools view -F 4 $in | perl -lane 'print \"\$F[2]\\t\$F[3]\"' > $outdir/$sample/$sample.hits";
+    }else{
+        print STDERR "WARNING - Using existing file \"$outdir/$sample/$sample.hits\" - cancel this run " .
+            "(ctrl-c) and restart after deleting this file if you do not want to use the existing file.\n";
+    }
 }
 
 for (my $i = 0; $i < @convert_commands; $i++){
@@ -168,7 +176,7 @@ sub runCommand{
 #########################
 sub doCnvSeq{
     my ($s, $o, $outdir) = @_;
-    system "perl ../cnv-seq.pl --test $s.hits --ref ../$o/$o.hits --genome human";
+    system "perl $script_dir/cnv-seq.pl --test $s.hits --ref ../$o/$o.hits --genome human --log2-threshold $log2 --p-value $pvalue";
     die "ERROR: $?\n" if $?;
     print STDERR "Creating and executing R script for $s vs $o...\n";
     my $rscript = make_r_script($s, $o, $outdir);
