@@ -119,6 +119,12 @@ if ($opts{num_matches}){
     $min_matches = $opts{num_matches};
 }
 
+if ($min_matches >= @input){
+    die "ERROR: --num_matches parameter is $min_matches but only " 
+    . scalar(@input) . " input files provided. Try adjusting the "
+    . "--num_matches parameter and running again.\n";
+}
+
 my $flanks = 0;
 if ($opts{flanks}){
     $flanks = $opts{flanks};
